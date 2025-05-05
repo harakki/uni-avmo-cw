@@ -1,4 +1,5 @@
 import re
+import sys
 from fractions import Fraction
 
 import pandas as pd
@@ -9,16 +10,21 @@ from rich.table import Table
 
 
 def read_problem(filename: str):
-    with open(filename, 'r') as f:
-        problem = f.readlines()
-        problem = list(map(lambda line: line.strip().replace(" ", ""), problem))
-        return problem
+    try:
+        with open(filename, 'r') as f:
+            problem = f.readlines()
+            problem = list(map(lambda line: line.strip().replace(" ", ""), problem))
+            return problem
+    except FileNotFoundError:
+        print(f"Файл '{filename}' не найден!", file=sys.stderr)
+        sys.exit(1)
 
 
 def print_problem(z_expr, goal, constraints):
-    print(f"Z = {z_expr} -> {goal}")
+    console = Console(force_terminal=True)
+    console.print(f"Z = {z_expr} -> {goal}")
     for constraint in constraints:
-        print(constraint)
+        console.print(constraint)
 
 
 def parse_problem(problem_lines: list):
@@ -26,13 +32,14 @@ def parse_problem(problem_lines: list):
     if not z_lines:
         raise ValueError("Не найдена целевая функция Z")
     z_line = z_lines[0]
-    problem_lines.remove(z_line)
+
+    constraint_lines = [l for l in problem_lines if l != z_line]
 
     z_expr_str, goal = re.match(r'Z\s*=\s*(.+?)\s*->\s*(min|max)', z_line, re.IGNORECASE).groups()
     z_expr = sp.sympify(z_expr_str)
 
     constraints = []
-    for l in problem_lines:
+    for l in constraint_lines:
         if '>=' in l:
             lhs, rhs = l.split('>=')
             constraints.append(sp.sympify(lhs.strip()) >= sp.sympify(rhs.strip()))
@@ -54,7 +61,7 @@ def parse_problem(problem_lines: list):
     return z_expr, goal.lower(), constraints, variables
 
 
-def canonize_problem(z_expr: str, goal: str, constraints: list):
+def canonize_problem(z_expr: sp.Expr, goal: str, constraints: list):
     z_expr = sp.sympify(z_expr)
     if goal not in ('min', 'max'):
         raise ValueError("Цель Z должна быть 'min' или 'max'")
@@ -65,7 +72,7 @@ def canonize_problem(z_expr: str, goal: str, constraints: list):
     canonized_constraints = []
 
     artificial_var_i = 1
-    artificial_variables = []
+    slack_surplus_vars = []
 
     for eq in constraints:
         new_var = sp.symbols(f's{artificial_var_i}')
@@ -74,12 +81,12 @@ def canonize_problem(z_expr: str, goal: str, constraints: list):
             # x1 + x2 >= a ===> -x1 - x2 + sN = a
             canonized_eq = sp.Eq(-eq.lhs + new_var, -eq.rhs)  # eq.lhs - new_var
             artificial_var_i += 1
-            artificial_variables.append(new_var)
+            slack_surplus_vars.append(new_var)
         elif isinstance(eq, sp.LessThan):
             # x1 + x2 <= a  ===>  x1 + x2 + sN = a
             canonized_eq = sp.Eq(eq.lhs + new_var, eq.rhs)
             artificial_var_i += 1
-            artificial_variables.append(new_var)
+            slack_surplus_vars.append(new_var)
         elif isinstance(eq, sp.Equality):
             # x1 + x2 = a
             canonized_eq = eq
@@ -88,11 +95,11 @@ def canonize_problem(z_expr: str, goal: str, constraints: list):
 
         canonized_constraints.append(canonized_eq)
 
-    return z_expr, canonized_constraints, artificial_variables
+    return z_expr, canonized_constraints, slack_surplus_vars
 
 
-def build_simplex_table(z_expr, canonized_constraints: list, variables: list, artificial_variables: list):
-    all_variables = variables + artificial_variables
+def build_simplex_table(z_expr, canonized_constraints: list, variables: list, slack_surplus_vars: list):
+    all_variables = variables + slack_surplus_vars
     column_headers = [str(v) for v in all_variables] + ['Св. член']
 
     rows = []
@@ -101,7 +108,7 @@ def build_simplex_table(z_expr, canonized_constraints: list, variables: list, ar
         lhs = eq.lhs
         rhs = eq.rhs
 
-        artificial_in_expr = [var for var in artificial_variables if lhs.has(var)]
+        artificial_in_expr = [var for var in slack_surplus_vars if lhs.has(var)]
         if artificial_in_expr:
             basis_variable = artificial_in_expr[0]
         else:
@@ -208,7 +215,7 @@ def dual_simplex_method(df: pd.DataFrame):
     return df
 
 
-def get_optimal_solution(df: pd.DataFrame):
+def get_optimal_solution(df: pd.DataFrame, goal: str):
     headers = list(df.columns)
     all_variables = headers[1:-1]
     m = len(df) - 1  # Количество ограничений
@@ -223,6 +230,8 @@ def get_optimal_solution(df: pd.DataFrame):
             solution[b] = Fraction(str(df.iloc[eq]["Св. член"]))
 
     optimal_z = Fraction(str(df.iloc[m]["Св. член"]))
+    if goal == 'max':
+        optimal_z = -optimal_z
     basis = list(basis_map.values())
     non_basis = sorted([v for v in all_variables if v not in basis])
 
@@ -284,13 +293,13 @@ def main():
     z_expr, goal, constraints, variables = parse_problem(problem)
     print("Исходная проблема:")
     print_problem(z_expr, goal, constraints)
-    z_expr, canonized_constraints, artificial_variables = canonize_problem(z_expr, goal, constraints)
+    z_expr, canonized_constraints, slack_surplus_vars = canonize_problem(z_expr, goal, constraints)
 
-    df = build_simplex_table(z_expr, canonized_constraints, variables, artificial_variables)
+    df = build_simplex_table(z_expr, canonized_constraints, variables, slack_surplus_vars)
     df = dual_simplex_method(df)
     print_simplex_table(df)
 
-    optimal_z, solution, all_variables, basis, non_basis = get_optimal_solution(df)
+    optimal_z, solution, all_variables, basis, non_basis = get_optimal_solution(df, goal)
     print_optimal_solution(optimal_z, solution)
 
     general_solution, z_expression = get_general_form_solution(df, basis, non_basis)
