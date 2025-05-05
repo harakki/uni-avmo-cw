@@ -241,43 +241,30 @@ def get_general_form_solution(df: pd.DataFrame, basis: list, non_basis: list):
     general_solution = {}
 
     # Выражения для базисных переменных
-    basis_row_index = {df.iloc[i]["Базис"]: i for i in range(m) if df.iloc[i]["Базис"] in basis}
-    for b, row_index in basis_row_index.items():
-        general_solution[b] = build_general_form_solution_rhs_expr(df, row_index, non_basis)
+    for i in range(m):
+        var = df.iloc[i]["Базис"]
+        if var in basis:
+            general_solution[var] = sp.simplify(build_general_form_solution_expr(df, i, non_basis))
 
     # Выражения для небазисных переменных
     for v in non_basis:
-        general_solution[v] = f"{v}"
+        general_solution[v] = sp.symbols(v)
 
     # 3. Выражение для Z
-    z_expr = build_general_form_solution_rhs_expr(df, m, non_basis)
+    z_expr = sp.simplify(build_general_form_solution_expr(df, m, non_basis))
 
     return general_solution, z_expr
 
 
-def build_general_form_solution_rhs_expr(df: pd.DataFrame, row_index: int, non_basis: list):
-    expr_parts = [str(df.iloc[row_index]["Св. член"])]
+def build_general_form_solution_expr(df: pd.DataFrame, row_index: int, non_basis: list):
+    rhs = df.iloc[row_index]["Св. член"]
+    expr = sp.Rational(rhs)
     for v in non_basis:
         coeff = df.iloc[row_index][v]
-        term = format_term(-coeff, v)
-        if term:
-            expr_parts.append(term)
+        if coeff != 0:
+            expr -= sp.Rational(coeff) * sp.symbols(v)
 
-    return sp.sympify("".join(expr_parts))
-
-
-def format_term(coeff: Fraction, var: str):
-    if coeff == 0:
-        return ""
-
-    sign = "+" if coeff > 0 else "-"
-    abs_coeff = abs(coeff)
-
-    if abs_coeff == 1:
-        term = f"{sign} {var}"
-    else:
-        term = f"{sign} {abs_coeff} * {var}"
-    return term
+    return expr
 
 
 def print_general_form_solution(solution_expr_dict: dict, z_expr: str, non_basis: list):
