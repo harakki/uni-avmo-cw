@@ -1,8 +1,11 @@
 import re
+from fractions import Fraction
 
 import pandas as pd
 import sympy as sp
-from tabulate import tabulate
+from rich import box
+from rich.console import Console
+from rich.table import Table
 
 
 def read_problem(filename: str):
@@ -125,11 +128,112 @@ def build_simplex_table(z_expr, canonized_constraints: list, variables: list, ar
     return df
 
 
-def print_simplex_table(df: pd.DataFrame):
-    print(tabulate(df, headers='keys', tablefmt='github', showindex=False))
+def print_simplex_table(df: pd.DataFrame, pivot_row=None, pivot_col=None, ratios=None):
+    console = Console(force_terminal=True)
+    table = Table(show_header=True, box=box.MARKDOWN)
+
+    headers = list(df.columns)
+    for col in headers:
+        table.add_column(str(col), justify="right")
+
+    for i, row in df.iterrows():
+        row_cells = []
+        for j, col in enumerate(headers):
+            val = row[col]
+            cell_text = str(val)
+            if pivot_row is not None and pivot_col is not None:
+                if i == pivot_row and not j == pivot_col + 1:
+                    cell_text = f"[cyan]{cell_text}[/cyan]"
+                if i == pivot_row and j == pivot_col + 1:
+                    cell_text = f"[bold bright_cyan]{cell_text}[/bold bright_cyan]"
+            row_cells.append(cell_text)
+        table.add_row(*row_cells)
+
+    console.print(table)
+
+    if ratios is not None:
+        # abs(Z-строка / разрешающая_строка)
+        ratios_text = ", ".join(f"{headers[j + 1]} = {str(ratios[j])}" for j in sorted(ratios.keys()))
+        console.print(f"Отношения (для выбора разрешающего столбца): {ratios_text}")
 
 
 def dual_simplex_method(df: pd.DataFrame):
+    numeric_cols = df.columns.drop('Базис')
+    for col in numeric_cols:
+        df[col] = df[col].apply(lambda x: Fraction(str(x)))
+
+    m = len(df) - 1  # Количество ограничений
+    free_col = df.columns[-1]  # Колонка "Свободный член"
+
+    step = 0
+    while True:
+        # Маска отрицательности свободных членов в ограничениях (N, [True|False])
+        neg_free = df.loc[df.index[:m], free_col] < 0
+        if not neg_free.any():
+            break
+        step += 1
+
+        # Индекс наименьшего свободного члена
+        pivot_row = int(df.loc[df.index[:m], free_col].idxmin())
+
+        pivot_row_coeffs = df.iloc[pivot_row, 1:-1]
+        # Индексы отрицательных коэффициентов в разрешающей строке
+        negative_pivot_row_coeffs = [i for i, val in enumerate(pivot_row_coeffs) if val < 0]
+        if not negative_pivot_row_coeffs:
+            print("Задача не имеет решения (нет отрицательных коэффициентов в разрешающей строке).")
+            return df
+
+        # Отношения |Z-строка_{j}| / |Разрешающая_строка_{ij}|
+        z_row_coeffs = df.iloc[m, 1:-1]
+        ratios = {i: abs(z_row_coeffs.iat[i]) / abs(pivot_row_coeffs.iat[i]) for i in negative_pivot_row_coeffs}
+        pivot_col = min(ratios, key=ratios.get)  # Перебор словаря по минимальному значению (ratios.get(key))
+
+        print_simplex_table(df, pivot_row=pivot_row, pivot_col=pivot_col, ratios=ratios)
+
+        # Деление разрешающей строки на опорный элемент
+        pivot_val = df.iat[pivot_row, pivot_col + 1]
+        df.iloc[pivot_row, 1:] = df.iloc[pivot_row, 1:] / pivot_val
+
+        # Обнуление всех коэффициентов в разрешающем столбце исключая разрешающую строку
+        for i in df.index:
+            if i == pivot_row:
+                continue
+            factor = df.iat[i, pivot_col + 1]
+            df.iloc[i, 1:] = df.iloc[i, 1:] - factor * df.iloc[pivot_row, 1:]
+
+        # Обновление базиса
+        new_var = df.columns[pivot_col + 1]
+        df.at[pivot_row, 'Базис'] = new_var
+
+    return df
+
+
+def get_optimal_solution(df: pd.DataFrame):
+    headers = list(df.columns)
+    all_variables = headers[1:-1]
+    m = len(df) - 1  # Количество ограничений
+
+    solution = {var: Fraction(0) for var in all_variables}
+
+    basis = []
+    for eq in range(m):
+        b = df.iloc[eq]["Базис"]
+        basis.append(b)
+        if b in all_variables:
+            solution[b] = Fraction(str(df.iloc[eq]["Св. член"]))
+
+    optimal_z = Fraction(str(df.iloc[m]["Св. член"]))
+    return solution, optimal_z, all_variables, basis
+
+
+def print_optimal_solution(optimal_z: Fraction, solution: dict):
+    console = Console(force_terminal=True)
+    vars_str = ", ".join(solution.keys())
+    values_str = ", ".join(str(v) for v in solution.values())
+    console.print(f"Z = ({vars_str}) = ({values_str}) = {optimal_z}")
+
+
+def get_general_form_solution(df: pd.DataFrame):
     ...
 
 
@@ -140,11 +244,11 @@ def main():
     print_problem(z_expr, goal, constraints)
     z_expr, canonized_constraints, artificial_variables = canonize_problem(z_expr, goal, constraints)
     df = build_simplex_table(z_expr, canonized_constraints, variables, artificial_variables)
-    print("Cимплекс-таблица:")
-    print_simplex_table(df)
     df = dual_simplex_method(df)
-    print("Итоговая симплекс-таблица")
     print_simplex_table(df)
+    opt_solution, opt_z, _, _ = get_optimal_solution(df)
+    print_optimal_solution(opt_z, opt_solution)
+    get_general_form_solution(df)
 
 
 if __name__ == "__main__":
