@@ -187,8 +187,9 @@ def dual_simplex_method(df: pd.DataFrame):
         # Индексы отрицательных коэффициентов в разрешающей строке
         negative_pivot_row_coeffs = [i for i, val in enumerate(pivot_row_coeffs) if val < 0]
         if not negative_pivot_row_coeffs:
-            print("Задача не имеет решения (нет отрицательных коэффициентов в разрешающей строке).")
-            return df
+            print_simplex_table(df)
+            print("Задача не имеет решения (нет отрицательных элементов в строке).")
+            return df, False
 
         # Отношения |Z-строка_{j}| / |Разрешающая_строка_{ij}|
         z_row_coeffs = df.iloc[m, 1:-1]
@@ -212,7 +213,7 @@ def dual_simplex_method(df: pd.DataFrame):
         new_var = df.columns[pivot_col + 1]
         df.at[pivot_row, 'Базис'] = new_var
 
-    return df
+    return df, True
 
 
 def get_optimal_solution(df: pd.DataFrame, goal: str):
@@ -285,8 +286,6 @@ def check_alternative_optimum(df: pd.DataFrame, goal: str, first_solution: dict,
 
         print("\nОбщее оптимальное решение:")
         console.print(f"λ * {x1} + (1 - λ) * {x2}")
-    else:
-        print("\nАльтернативное решение не найдено")
 
 
 def format_solution_values(solution_dict: dict, all_vars: list):
@@ -303,14 +302,14 @@ def main():
     z_expr, canonized_constraints, slack_surplus_vars = canonize_problem(z_expr, goal, constraints)
 
     df = build_simplex_table(z_expr, canonized_constraints, variables, slack_surplus_vars)
-    df = dual_simplex_method(df)
-    print_simplex_table(df)
+    df, res = dual_simplex_method(df)
+    if res is True:
+        print_simplex_table(df)
 
-    optimal_z, solution, all_variables, basis, non_basis = get_optimal_solution(df, goal)
-    print_optimal_solution(optimal_z, solution)
+        optimal_z, solution, all_variables, basis, non_basis = get_optimal_solution(df, goal)
+        print_optimal_solution(optimal_z, solution)
 
-    console.print(f"Z = {format_solution_values(solution, all_variables)} = {optimal_z}")
-    check_alternative_optimum(df, goal, solution, non_basis, all_variables)
+        check_alternative_optimum(df, goal, solution, non_basis, all_variables)
 
 
 if __name__ == "__main__":
