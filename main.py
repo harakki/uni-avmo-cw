@@ -90,7 +90,7 @@ def canonize_problem(z_expr: sp.Expr, goal: str, constraints: list):
             slack_surplus_vars.append(new_var)
         elif isinstance(eq, sp.Equality):
             # x1 + x2 = a
-            canonized_eq = eq
+            canonized_eq = sp.Eq(eq.lhs, eq.rhs)
         else:
             raise ValueError(f"Неизвестный тип ограничения: {eq}")
 
@@ -109,17 +109,26 @@ def build_simplex_table(z_expr, canonized_constraints: list, variables: list, sl
         lhs = eq.lhs
         rhs = eq.rhs
 
+        basis_variable = None
         artificial_in_expr = [var for var in slack_surplus_vars if lhs.has(var)]
         if artificial_in_expr:
             basis_variable = artificial_in_expr[0]
         else:
-            basis_variable = None
+            for var in variables:
+                coeff = lhs.coeff(var)
+                if coeff != 0:
+                    if coeff < 0:
+                        lhs = -lhs
+                        rhs = -rhs
+                    coeff = abs(coeff)
+                    lhs = lhs / coeff
+                    rhs = rhs / coeff
+                    basis_variable = var
+                    break
 
         row = []
         for var in all_variables:
-            coeff = lhs.coeff(var)
-            row.append(coeff)
-
+            row.append(lhs.coeff(var))
         row.append(rhs)
         rows.append(row)
         basis.append(str(basis_variable) if basis_variable is not None else "-")
@@ -160,7 +169,7 @@ def print_simplex_table(df: pd.DataFrame, pivot_row=None, pivot_col=None, ratios
 
     if ratios is not None:
         # abs(Z-строка / разрешающая_строка)
-        ratios_text = ", ".join(f"{headers[j + 1]} = {str(ratios[j])}" for j in sorted(ratios.keys()))
+        ratios_text = ", ".join(f"{df.columns[j + 1]} = {str(ratios[j])}" for j in sorted(ratios.keys()))
         console.print(f"Отношения (для выбора разрешающего столбца): {ratios_text}")
 
 
@@ -171,6 +180,12 @@ def dual_simplex_method(df: pd.DataFrame):
 
     m = len(df) - 1  # Количество ограничений
     free_col = df.columns[-1]  # Колонка "Свободный член"
+
+    z_row = df.iloc[-1, 1:-1]
+    if (z_row < 0).any():
+        print("\nЗадача не является двойственно допустимой (в Z-строке отрицательные элементы (исключая св. член):")
+        console.print(f"Z: ({', '.join(map(str, z_row))}) = {df.iloc[-1, -1]}")
+        return df, False
 
     step = 0
     while True:
@@ -297,7 +312,7 @@ def check_alternative_optimum(df: pd.DataFrame, goal: str, first_solution: dict,
 
 
 def format_solution_values(solution_dict: dict, all_vars: list):
-    ordered_vars = sorted(all_vars, key=lambda s: (s[0].lower() != 'x', int(s[1:])))
+    ordered_vars = sorted(all_vars, key=lambda s: (s[0].lower() != 'x', int(s[1:]) if s[1:].isdigit() else 0))
     values = [str(solution_dict.get(var, Fraction(0))) for var in ordered_vars]
     return f"({', '.join(values)})"
 
