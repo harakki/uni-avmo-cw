@@ -255,6 +255,7 @@ def check_alternative_optimum(df: pd.DataFrame, goal: str, first_solution: dict,
     print(f"\nНулевые коэффициенты в Z-строке для небазисных переменных: {', '.join(alternative_cols)}")
 
     second_solution = None
+    optimal_second_z = None
     for col in alternative_cols:
         ratios = []
         for i in range(len(df) - 1):
@@ -275,12 +276,19 @@ def check_alternative_optimum(df: pd.DataFrame, goal: str, first_solution: dict,
                 factor = df_copy.iloc[i][col]
                 df_copy.iloc[i, 1:] -= factor * df_copy.iloc[pivot_row, 1:]
 
+            df_copy.at[pivot_row, 'Базис'] = col
+            print_simplex_table(df_copy)
+
             # Получение второго решения
-            _, sol, *_ = get_optimal_solution(df_copy, goal)
+            optimal_second_z, sol, *_ = get_optimal_solution(df_copy, goal)
+            if goal == 'max':
+                optimal_second_z = -optimal_second_z
             second_solution = sol
             break
 
-    if second_solution:
+    if second_solution is not None:
+        print_optimal_solution(optimal_second_z, second_solution)
+
         x1 = format_solution_values(first_solution, all_vars)
         x2 = format_solution_values(second_solution, all_vars)
 
