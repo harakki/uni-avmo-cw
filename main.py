@@ -8,6 +8,8 @@ from rich import box
 from rich.console import Console
 from rich.table import Table
 
+console = Console(force_terminal=True)
+
 
 def read_problem(filename: str):
     try:
@@ -21,7 +23,6 @@ def read_problem(filename: str):
 
 
 def print_problem(z_expr, goal, constraints):
-    console = Console(force_terminal=True)
     console.print(f"Z = {z_expr} -> {goal}")
     for constraint in constraints:
         console.print(constraint)
@@ -136,7 +137,6 @@ def build_simplex_table(z_expr, canonized_constraints: list, variables: list, sl
 
 
 def print_simplex_table(df: pd.DataFrame, pivot_row=None, pivot_col=None, ratios=None):
-    console = Console(force_terminal=True)
     table = Table(show_header=True, box=box.MARKDOWN)
 
     headers = list(df.columns)
@@ -239,53 +239,60 @@ def get_optimal_solution(df: pd.DataFrame, goal: str):
 
 
 def print_optimal_solution(optimal_z: Fraction, solution: dict):
-    console = Console(force_terminal=True)
     vars_str = ", ".join(solution.keys())
     values_str = ", ".join(str(v) for v in solution.values())
     console.print(f"Z = ({vars_str}) = ({values_str}) = {optimal_z}")
 
 
-def get_general_form_solution(df: pd.DataFrame, basis: list, non_basis: list):
-    m = len(df) - 1  # Количество ограничений
-    general_solution = {}
+def check_alternative_optimum(df: pd.DataFrame, goal: str, first_solution: dict, non_basis: list, all_vars: list):
+    z_row = df.iloc[-1]
+    alternative_cols = [var for var in non_basis if z_row[var] == 0]
 
-    # Выражения для базисных переменных
-    for i in range(m):
-        var = df.iloc[i]["Базис"]
-        if var in basis:
-            general_solution[var] = sp.simplify(build_general_form_solution_expr(df, i, non_basis))
+    if not alternative_cols:
+        return
 
-    # Выражения для небазисных переменных
-    for v in non_basis:
-        general_solution[v] = sp.symbols(v)
+    print(f"\nНулевые коэффициенты в Z-строке для небазисных переменных: {', '.join(alternative_cols)}")
 
-    # 3. Выражение для Z
-    z_expr = sp.simplify(build_general_form_solution_expr(df, m, non_basis))
+    second_solution = None
+    for col in alternative_cols:
+        ratios = []
+        for i in range(len(df) - 1):
+            val = df[col].iloc[i]
+            if val > 0:
+                ratios.append((i, df.iloc[i, -1] / val))
 
-    return general_solution, z_expr
+        if ratios:
+            pivot_row = min(ratios, key=lambda x: x[1])[0]
+            df_copy = df.copy()
+
+            # Шаг симплекс-метода
+            pivot_val = df_copy.iloc[pivot_row][col]
+            df_copy.iloc[pivot_row, 1:] = df_copy.iloc[pivot_row, 1:] / pivot_val
+
+            for i in df_copy.index:
+                if i == pivot_row: continue
+                factor = df_copy.iloc[i][col]
+                df_copy.iloc[i, 1:] -= factor * df_copy.iloc[pivot_row, 1:]
+
+            # Получение второго решения
+            _, sol, *_ = get_optimal_solution(df_copy, goal)
+            second_solution = sol
+            break
+
+    if second_solution:
+        x1 = format_solution_values(first_solution, all_vars)
+        x2 = format_solution_values(second_solution, all_vars)
+
+        print("\nОбщее оптимальное решение:")
+        console.print(f"λ * {x1} + (1 - λ) * {x2}")
+    else:
+        print("\nАльтернативное решение не найдено")
 
 
-def build_general_form_solution_expr(df: pd.DataFrame, row_index: int, non_basis: list):
-    rhs = df.iloc[row_index]["Св. член"]
-    expr = sp.Rational(rhs)
-    for v in non_basis:
-        coeff = df.iloc[row_index][v]
-        if coeff != 0:
-            expr -= sp.Rational(coeff) * sp.symbols(v)
-
-    return expr
-
-
-def print_general_form_solution(solution_expr_dict: dict, z_expr: str, non_basis: list):
-    console = Console(force_terminal=True)
-    print("\nОбщий вид решения:")
-    for var in solution_expr_dict.keys():
-        console.print(f"{var} = {solution_expr_dict[var]}")
-
-    console.print(f"Z = {z_expr}")
-
-    if non_basis:
-        console.print(", ".join([f"{v} >= 0" for v in non_basis]))
+def format_solution_values(solution_dict: dict, all_vars: list):
+    ordered_vars = sorted(all_vars, key=lambda s: (s[0].lower() != 'x', int(s[1:])))
+    values = [str(solution_dict.get(var, Fraction(0))) for var in ordered_vars]
+    return f"({', '.join(values)})"
 
 
 def main():
@@ -302,8 +309,8 @@ def main():
     optimal_z, solution, all_variables, basis, non_basis = get_optimal_solution(df, goal)
     print_optimal_solution(optimal_z, solution)
 
-    general_solution, z_expression = get_general_form_solution(df, basis, non_basis)
-    print_general_form_solution(general_solution, z_expression, non_basis)
+    console.print(f"Z = {format_solution_values(solution, all_variables)} = {optimal_z}")
+    check_alternative_optimum(df, goal, solution, non_basis, all_variables)
 
 
 if __name__ == "__main__":
