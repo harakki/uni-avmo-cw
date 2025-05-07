@@ -183,7 +183,7 @@ def dual_simplex_method(df: pd.DataFrame):
 
     z_row = df.iloc[-1, 1:-1]
     if (z_row < 0).any():
-        print("\nЗадача не является двойственно допустимой (в Z-строке отрицательные элементы (исключая св. член):")
+        print("\nЗадача не является двойственно допустимой (в Z-строке есть отрицательные коэффициенты):")
         console.print(f"Z: ({', '.join(map(str, z_row))}) = {df.iloc[-1, -1]}")
         return df, False
 
@@ -202,8 +202,8 @@ def dual_simplex_method(df: pd.DataFrame):
         # Индексы отрицательных коэффициентов в разрешающей строке
         negative_pivot_row_coeffs = [i for i, val in enumerate(pivot_row_coeffs) if val < 0]
         if not negative_pivot_row_coeffs:
-            print_simplex_table(df)
-            print("Задача не имеет решения (нет отрицательных элементов в строке).")
+            print_simplex_table(df, pivot_row=pivot_row, pivot_col=df.columns.get_loc(free_col) - 1)
+            print("Задача неограниченная (нет отрицательных элементов в разрешающей строке).")
             return df, False
 
         # Отношения |Z-строка_{j}| / |Разрешающая_строка_{ij}|
